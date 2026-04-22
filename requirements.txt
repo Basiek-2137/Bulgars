@@ -1,0 +1,9 @@
+mediapipe==0.10.14
+numpy
+opencv-python
+ultralytics
+PyAudio
+pyttsx3
+customtkinter
+plotly
+google-generativeai
