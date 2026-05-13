@@ -2,18 +2,15 @@ import customtkinter as ctk
 
 
 class LoginFrame(ctk.CTkFrame):
-    # Dodaliśmy db_manager jako argument
     def __init__(self, master, db_manager, on_login_success):
         super().__init__(master)
-        self.db = db_manager  # Referencja do bazy danych
+        self.db = db_manager
         self.on_login_success = on_login_success
 
-        # Konfiguracja układu ramki
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
         self.grid_rowconfigure(7, weight=1)
 
-        # --- Elementy GUI ---
         self.title_label = ctk.CTkLabel(self, text="Wirtualny Trener", font=ctk.CTkFont(size=24, weight="bold"))
         self.title_label.grid(row=1, column=0, padx=30, pady=(0, 20))
 
@@ -33,11 +30,10 @@ class LoginFrame(ctk.CTkFrame):
                                           command=self.login_event, font=ctk.CTkFont(size=15, weight="bold"))
         self.login_button.grid(row=6, column=0, padx=30, pady=(20, 10))
 
-        # Opcja rejestracji z podpiętym zdarzeniem kliknięcia
         self.register_label = ctk.CTkLabel(self, text="Nie masz konta? Załóż je tutaj (Kliknij)",
                                            font=ctk.CTkFont(size=12, underline=True), cursor="hand2")
         self.register_label.grid(row=7, column=0, padx=30, pady=(0, 20))
-        self.register_label.bind("<Button-1>", self.register_event)  # Nasłuchiwanie kliknięcia myszką
+        self.register_label.bind("<Button-1>", self.register_event)
 
     def login_event(self):
         """Logika weryfikacji danych logowania z bazy SQLite"""
@@ -48,12 +44,10 @@ class LoginFrame(ctk.CTkFrame):
             self.error_label.configure(text="Wypełnij wszystkie pola!", text_color="red")
             return
 
-        # Prawdziwe zapytanie do bazy danych
         user_id = self.db.verify_login(username, password)
 
         if user_id:
             self.error_label.configure(text="")
-            # Przekazujemy username i user_id wyżej do aplikacji
             self.on_login_success(username, user_id)
         else:
             self.error_label.configure(text="Niepoprawna nazwa użytkownika lub hasło", text_color="red")
@@ -70,6 +64,6 @@ class LoginFrame(ctk.CTkFrame):
         success = self.db.add_user(username, password)
         if success:
             self.error_label.configure(text="Konto utworzone! Możesz się teraz zalogować.", text_color="green")
-            self.password_entry.delete(0, 'end')  # Czyścimy hasło po rejestracji
+            self.password_entry.delete(0, 'end')
         else:
             self.error_label.configure(text="Taka nazwa użytkownika już istnieje!", text_color="red")
