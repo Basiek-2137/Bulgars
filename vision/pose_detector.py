@@ -1,92 +1,158 @@
-from ultralytics import YOLO
+import cv2
+import mediapipe as mp
 import numpy as np
 
 class PoseDetector:
-    def __init__(self, model_type="yolov8n-pose.pt"):
-        self.model = YOLO(model_type)
-        self.device = 'cpu'
-        # Bufor na poprzednie punkty i współczynnik wygładzania dla stabilności
-        self.prev_keypoints = None
-        self.alpha = 0.8  # Wartość od 0.1 (bardzo płynne) do 1.0 (surowe dane)
-        self.front_leg = "RIGHT"
+    def __init__(self, mode=False, complexity=1, smooth=True, detection_conf=0.5, tracking_conf=0.5):
+        self.mp_pose = mp.solutions.pose
+        self.mp_drawing = mp.solutions.drawing_utils
+        self.pose = self.mp_pose.Pose(
+            static_image_mode=mode,
+            model_complexity=complexity,
+            smooth_landmarks=smooth,
+            min_detection_confidence=detection_conf,
+            min_tracking_confidence=tracking_conf
+        )
 
-    def get_keypoints(self, frame):
-        results = self.model.track(frame, persist=True, verbose=False, device=self.device, conf=0.5)
+        self.BULGARIAN_LANDMARKS = {
+            "tulow": [11, 12, 23, 24],
+            "lewa_noga": {"hip": 23, "knee": 25, "ankle": 27, "heel": 29, "toe": 31},
+            "prawa_noga": {"hip": 24, "knee": 26, "ankle": 28, "heel": 30, "toe": 32},
+            "rece": [15, 16]
+        }
 
-        if not results or not results[0].boxes or len(results[0].boxes) == 0:
+        self.counter = 0
+        self.stage = "up"
+        self.errors = []
+
+        self.results = None
+
+    def detect(self, frame):
+        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        image.flags.writeable = False
+        self.results = self.pose.process(image)
+        image.flags.writeable = True
+        if self.results.pose_landmarks:
+            self.mp_drawing.draw_landmarks(
+                frame,
+                self.results.pose_landmarks,
+                self.mp_pose.POSE_CONNECTIONS
+            )
+        return frame
+
+    def get_landmarks(self,frame):
+        if not self.results or not self.results.pose_landmarks:
             return None
 
-        boxes = results[0].boxes.xywh.cpu().numpy()
-        areas = boxes[:, 2] * boxes[:, 3]
-        biggest_user_idx = np.argmax(areas)
-        current_keypoints = results[0].keypoints.data[biggest_user_idx].cpu().numpy()
+        h, w, _ = frame.shape
+        landmarks = self.results.pose_landmarks.landmark
 
-        if self.prev_keypoints is None:
-            self.prev_keypoints = current_keypoints
-            return current_keypoints
+        extracted_data = {
+            "tulow": {},
+            "lewa_noga": {},
+            "prawa_noga": {},
+            "rece": {}
+        }
 
-        smoothed_keypoints = current_keypoints.copy()
+        for idx in self.BULGARIAN_LANDMARKS["tulow"]:
+            name = "lewe_ramie" if idx == 11 else "prawe_ramie" if idx == 12 else "lewe_biodro" if idx == 23 else "prawe_biodro"
+            lm = landmarks[idx]
+            extracted_data["tulow"][name] = (int(lm.x * w), int(lm.y * h), lm.visibility)
 
-        # 1. NAJPIERW STABILIZUJEMY KOSTKI (Kotwice)
-        # Kostki (15, 16) niemal się nie ruszają w bułgarze, więc wygładzamy je ekstremalnie
-        for ankle_idx in [15, 16]:
-            if current_keypoints[ankle_idx][2] > 0.5:
-                smoothed_keypoints[ankle_idx][0] = (0.1 * current_keypoints[ankle_idx][0] +
-                                                    0.9 * self.prev_keypoints[ankle_idx][0])
-                smoothed_keypoints[ankle_idx][1] = (0.1 * current_keypoints[ankle_idx][1] +
-                                                    0.9 * self.prev_keypoints[ankle_idx][1])
+        for key, idx in self.BULGARIAN_LANDMARKS["lewa_noga"].items():
+            lm = landmarks[idx]
+            extracted_data["lewa_noga"][key] = (int(lm.x * w), int(lm.y * h), lm.visibility)
 
-        # 2. TERAZ RESZTA CIAŁA I KOLANA
-        for i in range(len(current_keypoints)):
-            if current_keypoints[i][2] > 0.5:
-                # Jeśli to kostka, już ją obsłużyliśmy wyżej
-                if i in [15, 16]: continue
+        for key, idx in self.BULGARIAN_LANDMARKS["prawa_noga"].items():
+            lm = landmarks[idx]
+            extracted_data["prawa_noga"][key] = (int(lm.x * w), int(lm.y * h), lm.visibility)
 
-                is_knee = i in [13, 14]
-                current_alpha = 0.2 if is_knee else 0.6  #
+        for idx in self.BULGARIAN_LANDMARKS["rece"]:
+            name = "lewy_nadgarstek" if idx == 15 else "prawy_nadgarstek"
+            lm = landmarks[idx]
+            extracted_data["rece"][name] = (int(lm.x * w), int(lm.y * h), lm.visibility)
 
-                new_x = (current_alpha * current_keypoints[i][0] + (1 - current_alpha) * self.prev_keypoints[i][0])
-                new_y = (current_alpha * current_keypoints[i][1] + (1 - current_alpha) * self.prev_keypoints[i][1])
-                if is_knee:
-                    # 1. Zwiększamy responsywność (mniej "pamięci" poprzedniej klatki)
-                    # Zmiana z 0.2 na 0.4 sprawi, że kropka będzie szybciej reagować na ruch.
-                    current_alpha = 0.4
-                    new_x = (current_alpha * current_keypoints[i][0] + (1 - current_alpha) * self.prev_keypoints[i][0])
-                    new_y = (current_alpha * current_keypoints[i][1] + (1 - current_alpha) * self.prev_keypoints[i][1])
-
-                    hip_y = self.prev_keypoints[i - 2][1]
-                    stable_ankle_y = smoothed_keypoints[i + 2][1]
-                    leg_full_dist = abs(stable_ankle_y - hip_y)
-
-                    is_back_knee = (i == 13 and self.front_leg == "RIGHT") or \
-                                   (i == 14 and self.front_leg == "LEFT")
-
-                    if is_back_knee:
-                        # NOGA TYLNA: Zmniejszamy wagę poprawki (z 0.7 na 0.4)
-                        # Teraz YOLO ma 60% wpływu, a nasza "matematyka" tylko 40% asysty.
-                        f_hip_idx = 12 if self.front_leg == "RIGHT" else 11
-                        f_ankle_idx = 16 if self.front_leg == "RIGHT" else 15
-                        ref_height = abs(smoothed_keypoints[f_ankle_idx][1] - smoothed_keypoints[f_hip_idx][1])
-
-                        target_y = hip_y + (ref_height * 0.54)
-                        new_y = (0.6 * new_y) + (0.4 * target_y)
-                        new_x += 2  # Lekkie odsunięcie od uda[cite: 2]
-                    else:
-                        # NOGA PRZEDNIA: Utrzymujemy 45% wysokości dla poprawnego kąta[cite: 1, 3]
-                        target_y = hip_y + (leg_full_dist * 0.45)
-                        new_y = (0.5 * new_y) + (0.5 * target_y)
-
-                smoothed_keypoints[i][0] = new_x
-                smoothed_keypoints[i][1] = new_y
-            else:
-                smoothed_keypoints[i] = self.prev_keypoints[i]
-
-        self.prev_keypoints = smoothed_keypoints
-        return smoothed_keypoints
+        return extracted_data
 
     def calculate_angle(self, a, b, c):
-        a, b, c = np.array(a[:2]), np.array(b[:2]), np.array(c[:2])
-        rad = np.arctan2(c[1] - b[1], c[0] - b[0]) - np.arctan2(a[1] - b[1], a[0] - b[0])
-        angle = np.abs(rad * 180.0 / np.pi)
-        return 360 - angle if angle > 180 else angle
+        a = np.array(a[:2])
+        b = np.array(b[:2])
+        c = np.array(c[:2])
 
+        ba = a - b
+        bc = c - b
+
+        cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
+        cosine_angle = np.clip(cosine_angle, -1.0, 1.0)
+        return np.degrees(np.arccos(cosine_angle))
+
+    def verify_bulgarian_split_squat(self, points, working_leg="lewa_noga"):
+        if points is None:
+            return {"counter": self.counter, "stage": self.stage, "errors": [], "angle": 180}
+
+        hip_w = points[working_leg]["hip"]
+        knee_w = points[working_leg]["knee"]
+        ankle_w = points[working_leg]["ankle"]
+        toe_w = points[working_leg]["toe"]
+        shoulder = points["tulow"]["lewe_ramie"] if working_leg == "lewa_noga" else points["tulow"]["prawe_ramie"]
+
+        supporting_leg = "prawa_noga" if working_leg == "lewa_noga" else "lewa_noga"
+
+        angle_working_knee = self.calculate_angle(hip_w, knee_w, ankle_w)
+        angle_working_hip = self.calculate_angle(shoulder, hip_w, knee_w)
+
+        current_frame_errors = []
+
+        if angle_working_knee <= 150:
+            patrzy_w_prawo = toe_w[0] > points[working_leg]["heel"][0]
+            tolerancja_palcow = 10
+
+            if patrzy_w_prawo:
+                if knee_w[0] > (toe_w[0] + tolerancja_palcow):
+                    current_frame_errors.append("Kolano za daleko przed palcami!")
+            else:
+                if knee_w[0] < (toe_w[0] - tolerancja_palcow):
+                    current_frame_errors.append("Kolano za daleko przed palcami!")
+
+            if abs(knee_w[0] - ankle_w[0]) > 60:
+                current_frame_errors.append("Kolano ucieka na boki!")
+
+            if angle_working_hip < 80:
+                current_frame_errors.append("Za mocne pochylenie tułowia!")
+
+        is_down = angle_working_knee < 105 and angle_working_hip < 115
+        is_up = angle_working_knee > 155
+
+        if angle_working_knee < 145 and self.stage == "up":
+            for err in current_frame_errors:
+                if err not in self.errors:
+                    self.errors.append(err)
+
+        if is_down:
+            if self.stage == "up":
+                self.stage = "down"
+
+            for err in current_frame_errors:
+                if err not in self.errors:
+                    self.errors.append(err)
+
+        elif self.stage == "down":
+            for err in current_frame_errors:
+                if err not in self.errors:
+                    self.errors.append(err)
+
+            if is_up:
+                self.stage = "up"
+                if not self.errors:
+                    self.counter += 1
+                    print(f"Powtórzenie poprawne! Licznik: {self.counter}")
+                else:
+                    print(f"Powtórzenie odrzucone! Wykryte błędy w trakcie całego ruchu: {self.errors}")
+                self.errors = []
+
+        return {
+            "counter": self.counter,
+            "stage": self.stage,
+            "errors": current_frame_errors,
+            "angle": int(angle_working_knee)
+        }
