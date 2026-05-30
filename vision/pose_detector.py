@@ -1,6 +1,10 @@
 import cv2
 import mediapipe as mp
 import numpy as np
+from audio import VoiceAssistant
+from test import test_vision
+
+voice = VoiceAssistant('pl')
 
 class PoseDetector:
     def __init__(self, mode=False, complexity=1, smooth=True, detection_conf=0.5, tracking_conf=0.5):
@@ -96,8 +100,6 @@ class PoseDetector:
         toe_w = points[working_leg]["toe"]
         shoulder = points["tulow"]["lewe_ramie"] if working_leg == "lewa_noga" else points["tulow"]["prawe_ramie"]
 
-        supporting_leg = "prawa_noga" if working_leg == "lewa_noga" else "lewa_noga"
-
         angle_working_knee = self.calculate_angle(hip_w, knee_w, ankle_w)
         angle_working_hip = self.calculate_angle(shoulder, hip_w, knee_w)
 
@@ -146,8 +148,10 @@ class PoseDetector:
                 if not self.errors:
                     self.counter += 1
                     print(f"Powtórzenie poprawne! Licznik: {self.counter}")
+                    voice.speak("Powtórzenie poprawne!")
                 else:
                     print(f"Powtórzenie odrzucone! Wykryte błędy w trakcie całego ruchu: {self.errors}")
+                    voice.speak(self.errors)
                 self.errors = []
 
         return {
@@ -156,3 +160,6 @@ class PoseDetector:
             "errors": current_frame_errors,
             "angle": int(angle_working_knee)
         }
+
+if __name__ == "__main__":
+    test_vision

@@ -1,20 +1,20 @@
 import cv2
-import sys
-import os
-import numpy as np
-
+from audio import VoiceAssistant
 from vision import PoseDetector, CameraManager
 
-video_capture = 0
-#video_capture = "../8262c14ce5cf4128a5b0db20f52956701777999730610761.mp4";
+#video_capture = 0
+video_capture = "../8262c14ce5cf4128a5b0db20f52956701777999730610761.mp4";
 #video_capture = "../20260415_102333.mp4"
+
 cam = CameraManager(0,video_capture)
+voice = VoiceAssistant('pl')
+
 posse = PoseDetector()
 
 while cam.cap.isOpened():
     ret, frame = cam.cap.read()
     if not ret:
-        print("Nie można odebrać klatki z kamery. Kończenie pracy.")
+        voice.speak("Kończenie pracy.")
         break
 
     frame = posse.detect(frame)
