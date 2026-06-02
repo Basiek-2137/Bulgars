@@ -2,7 +2,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 from audio import VoiceAssistant
-from test import test_vision
+# from test import test_vision
 
 voice = VoiceAssistant('pl')
 
@@ -161,5 +161,5 @@ class PoseDetector:
             "angle": int(angle_working_knee)
         }
 
-if __name__ == "__main__":
-    test_vision
+#if __name__ == "__main__":
+#    test_vision
