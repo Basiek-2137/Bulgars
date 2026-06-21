@@ -10,7 +10,7 @@ class CoachResponse(BaseModel):
 
 class GeminiCoach():
     def __init__(self):
-        api_key = os.environ.get("GEMINI_API_KEY", "AIzaSyBlw4Gy2DHDnoCz26W0yBFu_AJSifthafU")
+        api_key = os.environ.get("GEMINI_API_KEY", "")
         self.client = genai.Client(api_key=api_key)
 
     def generate_workout_feedback(self, exercise_name, target_reps, completed_reps, errors_list):
