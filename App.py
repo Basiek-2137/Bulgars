@@ -1,16 +1,10 @@
-# This is a sample Python script.
+from gui.views.menu_view import VirtualTrainerApp
+from gui.views.login_view import LoginView
 
-# Press Shift+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
+def start_main_app(username):
+    app = VirtualTrainerApp(username)
+    app.mainloop()
 
-
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press Ctrl+F8 to toggle the breakpoint.
-
-
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
-    print_hi('PyCharm')
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+if __name__ == "__main__":
+    login_window = LoginView(on_login_success=start_main_app)
+    login_window.mainloop()

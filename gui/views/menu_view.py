@@ -1,22 +1,37 @@
 import customtkinter as ctk
+import cv2
+import sys
+import os
+from PIL import Image, ImageTk
+from vision import CameraManager, PoseDetector
+from data import GeminiCoach
+from core.database import Database
 
-# Ustawienia motywu aplikacji
-ctk.set_appearance_mode("System")  # Tryb jasny/ciemny na podstawie systemu
-ctk.set_default_color_theme("blue")  # Kolor przewodni
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+ctk.set_appearance_mode("System")
+ctk.set_default_color_theme("blue")
 
 
 class VirtualTrainerApp(ctk.CTk):
-    def __init__(self):
+    def __init__(self,username):
         super().__init__()
 
-        self.title("Wirtualny Trener - Menu Główne")
-        self.geometry("800x500")
+        self.title("Wirtualny Trener - Cyfrowy Asystent Treningu")
+        self.geometry("1100x650")
 
-        # --- Układ siatki (Grid Layout) ---
+        self.db = Database(db_name="virtual_trainer.db")
+        self.current_user = username
+        self.user_lang = self.db.get_user_language(self.current_user) or "pl"
+
+        self.cam = None
+        self.posse = None
+        self.is_training_active = False
+        self.target_reps = 10
+
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
 
-        # --- Tworzenie paska bocznego (Sidebar) ---
         self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
         self.sidebar_frame.grid_rowconfigure(4, weight=1)
@@ -24,118 +39,250 @@ class VirtualTrainerApp(ctk.CTk):
         self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="AI Trener", font=ctk.CTkFont(size=20, weight="bold"))
         self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
 
-        # Przyciski odpowiadające za "Wybór: Statystyki / Ćwiczenia / Znajomi" z diagramu aktywności
-        self.btn_exercise = ctk.CTkButton(self.sidebar_frame, text="Trening", command=self.show_exercise_frame)
-        self.btn_exercise.grid(row=1, column=0, padx=20, pady=10)
+        self.btn_menu = ctk.CTkButton(self.sidebar_frame, text="Panel Treningu", command=self.show_menu_view)
+        self.btn_menu.grid(row=1, column=0, padx=20, pady=10)
 
-        self.btn_stats = ctk.CTkButton(self.sidebar_frame, text="Statystyki", command=self.show_stats_frame)
+        self.btn_stats = ctk.CTkButton(self.sidebar_frame, text="Statystyki", command=self.show_stats_view)
         self.btn_stats.grid(row=2, column=0, padx=20, pady=10)
 
-        self.btn_friends = ctk.CTkButton(self.sidebar_frame, text="Znajomi", command=self.show_friends_frame)
-        self.btn_friends.grid(row=3, column=0, padx=20, pady=10)
-
-        # Wylogowanie / Zmiana profilu z początku diagramu
-        self.btn_logout = ctk.CTkButton(self.sidebar_frame, text="Wyloguj", fg_color="transparent", border_width=2,
-                                        text_color=("gray10", "#DCE4EE"))
+        self.btn_logout = ctk.CTkButton(self.sidebar_frame, text="Wyloguj", fg_color="crimson", hover_color="darkred",
+                                        command=self.logout)
+        self.sidebar_frame.grid_propagate(False)
         self.btn_logout.grid(row=5, column=0, padx=20, pady=20)
 
-        # --- Tworzenie ramek głównych (Widoki) ---
-        self.exercise_frame = self.create_exercise_frame()
-        self.stats_frame = self.create_stats_frame()
-        self.friends_frame = self.create_friends_frame()
+        self.main_container = ctk.CTkFrame(self, corner_radius=10)
+        self.main_container.grid(row=0, column=1, padx=20, pady=20, sticky="nsew")
+        self.main_container.grid_rowconfigure(0, weight=1)
+        self.main_container.grid_columnconfigure(0, weight=1)
 
-        # Domyślnie pokazujemy ekran ćwiczeń
-        self.show_exercise_frame()
+        self.create_menu_view()
+        self.create_stats_view()
 
-    # ==========================================
-    # WIDOKI (FRAMES)
-    # ==========================================
+        self.show_menu_view()
 
-    def create_exercise_frame(self):
-        """Widok konfiguracji i uruchamiania treningu"""
-        frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+    def create_menu_view(self):
+        """Tworzy panel konfiguracji i wbudowany odtwarzacz wideo w jednym widoku"""
+        self.menu_frame = ctk.CTkFrame(self.main_container, fg_color="transparent")
 
-        label = ctk.CTkLabel(frame, text="Konfiguracja Treningu", font=ctk.CTkFont(size=24, weight="bold"))
-        label.pack(pady=(40, 20))
+        self.menu_frame.grid_columnconfigure(0, weight=1)
+        self.menu_frame.grid_columnconfigure(1, weight=3)
+        self.menu_frame.grid_rowconfigure(0, weight=1)
 
-        # "Wybór ćwiczenia (tymczasowo tylko bułgarski)"
-        ctk.CTkLabel(frame, text="Wybierz ćwiczenie:").pack(pady=(10, 0))
-        exercise_combo = ctk.CTkComboBox(frame, values=["Przysiad Bułgarski (Dostępne)", "Martwy ciąg (Wkrótce)",
-                                                        "Wyciskanie (Wkrótce)"], width=250)
-        exercise_combo.pack(pady=(0, 20))
+        left_panel = ctk.CTkFrame(self.menu_frame, width=250)
+        left_panel.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        left_panel.grid_columnconfigure(0, weight=1)
 
-        # "Wybór ciężaru"
-        ctk.CTkLabel(frame, text="Wybierz obciążenie (kg):").pack(pady=(10, 0))
-        weight_slider = ctk.CTkSlider(frame, from_=0, to=100, number_of_steps=20)
-        weight_slider.pack()
-        weight_label = ctk.CTkLabel(frame, text="0 kg")  # Opcjonalnie można tu dodać dynamiczne odświeżanie wartości
-        weight_label.pack(pady=(0, 20))
+        title_label = ctk.CTkLabel(left_panel, text="Konfiguracja serii", font=ctk.CTkFont(size=16, weight="bold"))
+        title_label.grid(row=0, column=0, padx=20, pady=(20, 10))
 
-        # Przejście do "Wyświetlenie GUI asystenta ćwiczenia"
-        start_btn = ctk.CTkButton(frame, text="Rozpocznij Trening", height=40, font=ctk.CTkFont(size=16, weight="bold"),
-                                  fg_color="#2FA572", hover_color="#106A43")
-        start_btn.pack(pady=40)
+        label_ex = ctk.CTkLabel(left_panel, text="Wybierz ćwiczenie:")
+        label_ex.grid(row=1, column=0, padx=20, pady=(10, 0), sticky="w")
 
-        return frame
+        self.exercise_combo = ctk.CTkOptionMenu(left_panel,
+                                                values=["Przysiad Bułgarski", "Przysiad Klasyczny (Wkrótce)"])
+        self.exercise_combo.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
 
-    def create_stats_frame(self):
-        """Widok ze statystykami - tu później wejdzie biblioteka Plotly"""
-        frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        label_reps = ctk.CTkLabel(left_panel, text="Liczba powtórzeń:")
+        label_reps.grid(row=3, column=0, padx=20, pady=(10, 0), sticky="w")
 
-        label = ctk.CTkLabel(frame, text="Twoje Statystyki", font=ctk.CTkFont(size=24, weight="bold"))
-        label.pack(pady=(40, 20))
+        self.reps_entry = ctk.CTkEntry(left_panel, placeholder_text="10")
+        self.reps_entry.insert(0, "10")
+        self.reps_entry.grid(row=4, column=0, padx=20, pady=10, sticky="ew")
 
-        # "Wyświetlanie statystyk poprzednich ćwiczeń"
-        info_label = ctk.CTkLabel(frame,
-                                  text="Tutaj pojawią się interaktywne wykresy z biblioteki Plotly.\nPokazujące historię Twoich powtórzeń i użytego ciężaru.",
-                                  text_color="gray")
-        info_label.pack(pady=20)
+        self.btn_action = ctk.CTkButton(left_panel, text="Rozpocznij Trening", fg_color="green",
+                                        hover_color="darkgreen", command=self.toggle_training)
+        self.btn_action.grid(row=5, column=0, padx=20, pady=30, sticky="ew")
 
-        return frame
+        self.right_panel = ctk.CTkFrame(self.menu_frame, fg_color="black")
+        self.right_panel.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
+        self.right_panel.grid_rowconfigure(0, weight=1)
+        self.right_panel.grid_columnconfigure(0, weight=1)
 
-    def create_friends_frame(self):
-        """Widok funkcji społecznościowych"""
-        frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        self.video_display = ctk.CTkLabel(self.right_panel,
+                                          text="KAMERA WYŁĄCZONA\nSkonfiguruj parametry i kliknij przycisk Start",
+                                          font=ctk.CTkFont(size=14))
+        self.video_display.grid(row=0, column=0, sticky="nsew")
 
-        label = ctk.CTkLabel(frame, text="Społeczność", font=ctk.CTkFont(size=24, weight="bold"))
-        label.pack(pady=(40, 20))
+    def create_stats_view(self):
+        """Tworzy panel statystyk (Zabezpieczenie integracji z bazą danych)"""
+        self.stats_frame = ctk.CTkFrame(self.main_container, fg_color="transparent")
 
-        # "Wyświetlanie wyników znajomych"
-        friends_box = ctk.CTkTextbox(frame, width=300, height=150)
-        friends_box.pack(pady=10)
-        friends_box.insert("0.0",
-                           "Wyniki znajomych:\n\n1. Jan Kowalski - 50x Przysiad Bułgarski (20kg)\n2. Anna Nowak - 30x Przysiad Bułgarski (15kg)")
-        friends_box.configure(state="disabled")  # Tylko do odczytu
+        stats_label = ctk.CTkLabel(self.stats_frame, text="Historia Twoich Treningów",
+                                   font=ctk.CTkFont(size=24, weight="bold"))
+        stats_label.pack(pady=20)
 
-        # "Dodanie znajomych"
-        add_friend_entry = ctk.CTkEntry(frame, placeholder_text="Nazwa użytkownika...", width=200)
-        add_friend_entry.pack(pady=(20, 5))
+        self.data_container = ctk.CTkTextbox(self.stats_frame, width=500, height=300)
+        self.data_container.insert("0.0",
+                                   "Tutaj ładowane są dane z bazy danych sesji treningowych...\nFunkcja bazy danych działa prawidłowo.")
+        self.data_container.configure(state="disabled")
+        self.data_container.pack(pady=10)
 
-        add_friend_btn = ctk.CTkButton(frame, text="Dodaj znajomego")
-        add_friend_btn.pack()
-
-        return frame
-
-    # ==========================================
-    # LOGIKA PRZEŁĄCZANIA WIDOKÓW
-    # ==========================================
-
-    def show_exercise_frame(self):
-        self.hide_all_frames()
-        self.exercise_frame.grid(row=0, column=1, sticky="nsew")
-
-    def show_stats_frame(self):
-        self.hide_all_frames()
-        self.stats_frame.grid(row=0, column=1, sticky="nsew")
-
-    def show_friends_frame(self):
-        self.hide_all_frames()
-        self.friends_frame.grid(row=0, column=1, sticky="nsew")
-
-    def hide_all_frames(self):
-        self.exercise_frame.grid_forget()
+    def show_menu_view(self):
         self.stats_frame.grid_forget()
-        self.friends_frame.grid_forget()
+        self.menu_frame.grid(row=0, column=0, sticky="nsew")
+
+    def show_stats_view(self):
+        self.menu_frame.grid_forget()
+        self.stats_frame.grid(row=0, column=0, sticky="nsew")
+
+        top_users = self.db.get_top_users()
+        stats_text = "TOP 10 UŻYTKOWNIKÓW (Liczba sesji):\n\n"
+        for i, (user, count) in enumerate(top_users, 1):
+            stats_text += f"{i}. {user} - {count} sesji\n"
+
+        self.data_container.configure(state="normal")
+        self.data_container.delete("0.0", "end")
+        self.data_container.insert("0.0", stats_text)
+        self.data_container.configure(state="disabled")
+
+
+    def toggle_training(self):
+        """Przełącza stan sesji treningowej między aktywnym a nieaktywnym"""
+        if self.is_training_active:
+            self.stop_training_session()
+        else:
+            self.start_training_session()
+
+    def start_training_session(self):
+        """Inicjuje proces treningu, rozpoczynając od 10-sekundowego odliczania."""
+        wybrane_cwiczenie = self.exercise_combo.get()
+        if "Wkrótce" in wybrane_cwiczenie:
+            return
+
+        try:
+            self.target_reps = int(self.reps_entry.get())
+        except ValueError:
+            self.target_reps = 10
+
+        self.is_training_active = True
+
+        self.btn_action.configure(text="Zatrzymaj", fg_color="crimson", hover_color="darkred",
+                                  command=self.stop_training_session)
+        self.btn_menu.configure(state="disabled")
+        self.btn_stats.configure(state="disabled")
+
+        self.countdown_time = 10
+
+
+        self.run_countdown()
+
+    def run_countdown(self):
+        """Asynchroniczna pętla odliczająca czas przed włączeniem kamery."""
+        if not self.is_training_active:
+            return
+
+        if self.countdown_time > 0:
+            self.video_display.configure(
+                text=f"PRZYGOTUJ SIĘ!\n\nStart za:\n{self.countdown_time}",
+                font=ctk.CTkFont(size=40, weight="bold")
+            )
+            self.countdown_time -= 1
+            self.after(1000, self.run_countdown)
+        else:
+            self.video_display.configure(text="ŁADOWANIE KAMERY...", font=ctk.CTkFont(size=20))
+            self.begin_actual_camera_capture()
+
+    def begin_actual_camera_capture(self):
+        """Tutaj znajduje się stary kod z Twojej funkcji start_training_session."""
+        self.posse = PoseDetector()
+        self.all_session_errors = []
+
+        self.cam = CameraManager(self.posse, 0)
+        self.update_video_stream()
+
+    def update_video_stream(self):
+        if not self.is_training_active or self.cam is None or not self.cam.cap.isOpened():
+            return
+
+        ret, frame = self.cam.cap.read()
+        if not ret:
+            self.stop_training_session()
+            return
+
+        frame = self.posse.detect(frame)
+        punkty_bulgarskie = self.posse.get_landmarks(frame)
+        raport = self.posse.verify_bulgarian_split_squat(punkty_bulgarskie, working_leg='prawa_noga')
+
+        if raport["errors"]:
+            for err in raport["errors"]:
+                if err not in self.all_session_errors:
+                    self.all_session_errors.append(err)
+
+        frame = self.cam.draw_trainer_hud(frame, raport, target_reps=self.target_reps)
+
+        self.last_completed_reps = raport["counter"]
+
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(rgb_frame)
+
+        display_width = self.right_panel.winfo_width()
+        display_height = self.right_panel.winfo_height()
+        if display_width < 10 or display_height < 10:
+            display_width, display_height = 640, 480
+
+        pil_img = pil_img.resize((display_width, display_height), Image.Resampling.LANCZOS)
+        tk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(display_width, display_height))
+        self.video_display.configure(image=tk_img, text="")
+        self.video_display.image = tk_img
+
+        if raport["counter"] >= self.target_reps:
+            try:
+                self.cam.voice.speak("Koniec serii, świetna robota!", override=True)
+            except AttributeError:
+                pass
+            self.stop_training_session()
+            return
+
+        self.after(33, self.update_video_stream)
+
+    def stop_training_session(self):
+        """Zatrzymuje trening, zapisuje sesję i pokazuje raport AI."""
+        self.is_training_active = False
+
+        self.db.save_training_session(self.current_user)
+
+        print("Trwa generowanie podsumowania przez AI Coach...")
+        coach = GeminiCoach()
+        feedback = coach.generate_workout_feedback(
+            exercise_name=self.exercise_combo.get(),
+            target_reps=self.target_reps,
+            completed_reps=getattr(self, 'last_completed_reps', 0),
+            errors_list=getattr(self, 'all_session_errors', [])
+        )
+
+        self.show_feedback_popup(feedback)
+
+        if self.cam:
+            self.cam.stop()
+            self.cam = None
+        self.posse = None
+
+        self.btn_action.configure(text="Rozpocznij Trening", fg_color="green")
+        self.btn_menu.configure(state="normal")
+        self.btn_stats.configure(state="normal")
+
+        self.show_stats_view()
+
+    def logout(self):
+        if self.is_training_active:
+            self.stop_training_session()
+        print("Wylogowywanie z systemu...")
+        self.destroy()
+
+    def show_feedback_popup(self, feedback_text):
+        """Tworzy osobne okno typu popup dla raportu AI."""
+        popup = ctk.CTkToplevel(self)
+        popup.title("Raport Trenera AI")
+        popup.geometry("400x400")
+
+        textbox = ctk.CTkTextbox(popup, width=350, height=300)
+        textbox.pack(padx=20, pady=20)
+        textbox.insert("0.0", feedback_text)
+        textbox.configure(state="disabled")
+
+        btn_close = ctk.CTkButton(popup, text="Zamknij", command=popup.destroy)
+        btn_close.pack(pady=10)
+
 
 
 if __name__ == "__main__":

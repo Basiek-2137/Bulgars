@@ -119,7 +119,7 @@ class PoseDetector:
             if abs(knee_w[0] - ankle_w[0]) > 60:
                 current_frame_errors.append("Kolano ucieka na boki!")
 
-            if angle_working_hip < 80:
+            if angle_working_hip < 70:
                 current_frame_errors.append("Za mocne pochylenie tułowia!")
 
         is_down = angle_working_knee < 105 and angle_working_hip < 115
